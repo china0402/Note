@@ -1,0 +1,183 @@
+https://www.codeleading.com/article/95552245397/
+
+
+SpringBoot中Jackson返回null处理,字符串类型转空串,数组集合转[],对象转{}
+技术标签： Jackson  null值转换  SerializerFactory  JsonSerializer  BeanPropertyWriter
+
+文章目录
+1.自定义null值序列化处理器
+2.序列化程序修改器
+3.配置Jackson实体
+SpringBoot返回Json数据中null值处理，将字符串类型null值转换为""，将集合数组类型null值转换为[]，将原始数据类型null值转换为0，将布尔类型null值转换为false，将实体对象null值转换为{}。
+
+1.自定义null值序列化处理器
+import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.databind.JsonSerializer;
+import com.fasterxml.jackson.databind.SerializerProvider;
+import java.io.IOException;
+
+/**
+ * 自定义null值序列化处理器
+ */
+public class CustomizeNullJsonSerializer {
+
+    /**
+     * 处理数组集合类型的null值
+     */
+    public static class NullArrayJsonSerializer extends JsonSerializer<Object> {
+        @Override
+        public void serialize(Object value, JsonGenerator jsonGenerator,
+        					  SerializerProvider serializerProvider) throws IOException {
+            jsonGenerator.writeStartArray();
+            jsonGenerator.writeEndArray();
+        }
+    }
+
+    /**
+     * 处理字符串类型的null值
+     */
+    public static class NullStringJsonSerializer extends JsonSerializer<Object> {
+        @Override
+        public void serialize(Object value, JsonGenerator jsonGenerator,
+        					  SerializerProvider serializerProvider) throws IOException {
+            jsonGenerator.writeString("");
+        }
+    }
+
+    /**
+     * 处理数值类型的null值
+     */
+    public static class NullNumberJsonSerializer extends JsonSerializer<Object> {
+        @Override
+        public void serialize(Object value, JsonGenerator jsonGenerator,
+                              SerializerProvider serializerProvider) throws IOException {
+            jsonGenerator.writeNumber(0);
+        }
+    }
+
+    /**
+     * 处理boolean类型的null值
+     */
+    public static class NullBooleanJsonSerializer extends JsonSerializer<Object> {
+        @Override
+        public void serialize(Object value, JsonGenerator jsonGenerator,
+                              SerializerProvider serializerProvider) throws IOException {
+            jsonGenerator.writeBoolean(false);
+        }
+    }
+
+    /**
+     * 处理实体对象类型的null值
+     */
+    public static class NullObjectJsonSerializer extends JsonSerializer<Object> {
+        @Override
+        public void serialize(Object value, JsonGenerator jsonGenerator,
+                              SerializerProvider serializerProvider) throws IOException {
+            jsonGenerator.writeStartObject();
+            jsonGenerator.writeEndObject();
+        }
+    }
+
+}
+
+2.序列化程序修改器
+import com.fasterxml.jackson.databind.BeanDescription;
+import com.fasterxml.jackson.databind.SerializationConfig;
+import com.fasterxml.jackson.databind.ser.BeanPropertyWriter;
+import com.fasterxml.jackson.databind.ser.BeanSerializerModifier;
+
+import java.util.Collection;
+import java.util.List;
+
+/**
+ * <pre>
+ * 此modifier主要做的事情为：
+ * 1.当序列化类型为数组集合时，当值为null时，序列化成[]
+ * 2.String类型值序列化为""
+ *
+ * </pre>
+ */
+public class MyBeanSerializerModifier extends BeanSerializerModifier {
+
+    @Override
+    public List<BeanPropertyWriter> changeProperties(SerializationConfig config,
+                                                     BeanDescription beanDesc,
+                                                     List<BeanPropertyWriter> beanProperties) {
+        // 循环所有的beanPropertyWriter
+        for (int i = 0; i < beanProperties.size(); i++) {
+            BeanPropertyWriter writer = beanProperties.get(i);
+            // 判断字段的类型，如果是数组或集合则注册nullSerializer
+            if (isArrayType(writer)) {
+                // 给writer注册一个自己的nullSerializer
+                writer.assignNullSerializer(new CustomizeNullJsonSerializer.NullArrayJsonSerializer());
+            }
+            if (isStringType(writer)) {
+                writer.assignNullSerializer(new CustomizeNullJsonSerializer.NullStringJsonSerializer());
+            }
+        }
+        return beanProperties;
+    }
+
+    /**
+     * 是否是数组
+     */
+    private boolean isArrayType(BeanPropertyWriter writer) {
+        Class<?> clazz = writer.getType().getRawClass();
+        return clazz.isArray() || Collection.class.isAssignableFrom(clazz);
+    }
+
+    /**
+     * 是否是String
+     */
+    private boolean isStringType(BeanPropertyWriter writer) {
+        Class<?> clazz = writer.getType().getRawClass();
+        return CharSequence.class.isAssignableFrom(clazz) || Character.class.isAssignableFrom(clazz);
+    }
+
+    /**
+     * 是否是数值类型
+     */
+    private boolean isNumberType(BeanPropertyWriter writer) {
+        Class<?> clazz = writer.getType().getRawClass();
+        return Number.class.isAssignableFrom(clazz);
+    }
+
+    /**
+     * 是否是boolean
+     */
+    private boolean isBooleanType(BeanPropertyWriter writer) {
+        Class<?> clazz = writer.getType().getRawClass();
+        return clazz.equals(Boolean.class);
+    }
+
+}
+
+3.配置Jackson实体
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializerProvider;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
+import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
+
+/**
+ * 配置Jackson实体
+ */
+@Configuration
+public class JacksonConfig {
+    @Bean
+    @Primary
+    @ConditionalOnMissingBean(ObjectMapper.class)
+    public ObjectMapper jacksonObjectMapper(Jackson2ObjectMapperBuilder builder) {
+        ObjectMapper objectMapper = builder.createXmlMapper(false).build();
+        /** 为objectMapper注册一个带有SerializerModifier的Factory */
+        objectMapper.setSerializerFactory(objectMapper.getSerializerFactory()
+                .withSerializerModifier(new MyBeanSerializerModifier()));
+
+        SerializerProvider serializerProvider = objectMapper.getSerializerProvider();
+        serializerProvider.setNullValueSerializer(new CustomizeNullJsonSerializer
+        										.NullObjectJsonSerializer());
+        return objectMapper;
+    }
+}
